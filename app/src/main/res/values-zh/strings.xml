@@ -36,6 +36,8 @@
 
 	<string name="preferences">偏好设置</string>
 	<string name="wallpaper">壁纸</string>
+	<string name="wallpaper_frame_rate">壁纸刷新率</string>
+	<string name="wallpaper_frame_rate_summary">根据当前屏幕支持的模式生成，并与 VSync 对齐</string>
 	<string name="save_battery">省电模式</string>
 	<string name="save_battery_summary">电池电量低时停止渲染</string>
 	<string name="sort_by_last_modification">按修改时间排序</string>

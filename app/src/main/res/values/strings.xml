@@ -39,6 +39,8 @@
 	<!-- PreferencesFragment -->
 	<string name="preferences">Preferences</string>
 	<string name="wallpaper">Wallpaper</string>
+	<string name="wallpaper_frame_rate">Wallpaper refresh rate</string>
+	<string name="wallpaper_frame_rate_summary">VSync-aligned target rate generated from supported display modes</string>
 	<string name="save_battery">Save battery</string>
 	<string name="save_battery_summary">Stop rendering when battery is low</string>
 	<string name="sort_by_last_modification">Sort by last modification</string>

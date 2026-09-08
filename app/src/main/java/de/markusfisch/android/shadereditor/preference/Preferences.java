@@ -18,6 +18,7 @@ import de.markusfisch.android.shadereditor.R;
 
 public class Preferences {
 	public static final String WALLPAPER_SHADER = "shader";
+	public static final String WALLPAPER_FRAME_RATE = "wallpaper_frame_rate";
 	public static final String SAVE_BATTERY = "save_battery";
 	public static final String SORT_BY_LAST_MODIFICATION = "sort_by_last_modification";
 	public static final String RUN_MODE = "run_mode";
@@ -61,6 +62,7 @@ public class Preferences {
 
 	private SharedPreferences preferences;
 	private long wallpaperShaderId = 1;
+	private int wallpaperFrameRate = WallpaperFrameRateOptions.DEFAULT_FRAME_RATE;
 	private boolean saveBattery = true;
 	private boolean sortByLastModification = true;
 	private int runMode = RUN_AUTO;
@@ -114,6 +116,9 @@ public class Preferences {
 		wallpaperShaderId = parseLong(
 				preferences.getString(WALLPAPER_SHADER, null),
 				wallpaperShaderId);
+		wallpaperFrameRate = parseInt(
+				preferences.getString(WALLPAPER_FRAME_RATE, null),
+				wallpaperFrameRate);
 		saveBattery = preferences.getBoolean(
 				SAVE_BATTERY,
 				saveBattery);
@@ -305,6 +310,10 @@ public class Preferences {
 	public void setWallpaperShader(long id) {
 		wallpaperShaderId = id;
 		putString(WALLPAPER_SHADER, String.valueOf(wallpaperShaderId));
+	}
+
+	public int getWallpaperFrameRate() {
+		return wallpaperFrameRate;
 	}
 
 	public long getDefaultNewShader() {

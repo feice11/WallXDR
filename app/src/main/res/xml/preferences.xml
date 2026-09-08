@@ -7,6 +7,11 @@
 		<de.markusfisch.android.shadereditor.preference.ShaderListPreference
 			android:key="shader"
 			android:title="@string/shader"/>
+		<ListPreference
+			android:key="wallpaper_frame_rate"
+			android:title="@string/wallpaper_frame_rate"
+			android:summary="@string/wallpaper_frame_rate_summary"
+			android:defaultValue="60"/>
 		<androidx.preference.SwitchPreferenceCompat
 			android:key="save_battery"
 			android:title="@string/save_battery"

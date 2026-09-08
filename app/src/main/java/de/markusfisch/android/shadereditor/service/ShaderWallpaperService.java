@@ -4,8 +4,12 @@ import android.content.ComponentName;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.opengl.GLSurfaceView;
+import android.os.Build;
 import android.service.wallpaper.WallpaperService;
+import android.util.Log;
+import android.view.Choreographer;
 import android.view.MotionEvent;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 
 import androidx.annotation.Nullable;
@@ -15,12 +19,14 @@ import de.markusfisch.android.shadereditor.database.DataRecords;
 import de.markusfisch.android.shadereditor.database.DataSource;
 import de.markusfisch.android.shadereditor.database.Database;
 import de.markusfisch.android.shadereditor.preference.Preferences;
+import de.markusfisch.android.shadereditor.preference.WallpaperFrameRateOptions;
 import de.markusfisch.android.shadereditor.project.LegacyShaderProjectSource;
 import de.markusfisch.android.shadereditor.project.ShaderProjectSession;
 import de.markusfisch.android.shadereditor.receiver.BatteryLevelReceiver;
 import de.markusfisch.android.shadereditor.widget.ShaderView;
 
 public class ShaderWallpaperService extends WallpaperService {
+	private static final String FRAME_RATE_TAG = "ShaderEditor.FrameRate";
 	private static ShaderWallpaperEngine engine;
 
 	private ComponentName batteryLevelComponent;
@@ -67,6 +73,12 @@ public class ShaderWallpaperService extends WallpaperService {
 				String key) {
 			if (Preferences.WALLPAPER_SHADER.equals(key)) {
 				setShader();
+			} else if (Preferences.WALLPAPER_FRAME_RATE.equals(key)) {
+				ShaderEditorApp.preferences.update(ShaderWallpaperService.this);
+				if (view != null) {
+					view.setTargetFrameRate(
+							ShaderEditorApp.preferences.getWallpaperFrameRate());
+				}
 			}
 		}
 
@@ -75,6 +87,14 @@ public class ShaderWallpaperService extends WallpaperService {
 			super.onCreate(holder);
 			view = new ShaderWallpaperView();
 			setShader();
+		}
+
+		@Override
+		public void onSurfaceCreated(SurfaceHolder holder) {
+			super.onSurfaceCreated(holder);
+			if (view != null) {
+				view.applyFrameRateToSurface();
+			}
 		}
 
 		@Override
@@ -132,7 +152,8 @@ public class ShaderWallpaperService extends WallpaperService {
 
 		private void setRenderMode(int renderMode) {
 			if (view != null) {
-				view.setRenderMode(renderMode);
+				view.setFrameSchedulingEnabled(
+						renderMode != GLSurfaceView.RENDERMODE_WHEN_DIRTY);
 			}
 		}
 
@@ -170,12 +191,114 @@ public class ShaderWallpaperService extends WallpaperService {
 		}
 
 		private class ShaderWallpaperView extends ShaderView {
+			private static final long NS_PER_SECOND = 1000000000L;
+			private final Choreographer choreographer = Choreographer.getInstance();
+			private final Choreographer.FrameCallback frameCallback = this::onVsync;
+			private boolean visible;
+			private boolean frameSchedulingEnabled;
+			private boolean callbackPosted;
+			private long nextFrameTimeNs;
+			private long framePeriodNs = NS_PER_SECOND /
+					WallpaperFrameRateOptions.DEFAULT_FRAME_RATE;
+			private int targetFrameRate = WallpaperFrameRateOptions.DEFAULT_FRAME_RATE;
+
 			public ShaderWallpaperView() {
 				super(ShaderWallpaperService.this,
-						ShaderEditorApp.preferences.isBatteryLow()
-								? GLSurfaceView.RENDERMODE_WHEN_DIRTY
-								: GLSurfaceView.RENDERMODE_CONTINUOUSLY,
+						GLSurfaceView.RENDERMODE_WHEN_DIRTY,
 						true);
+				frameSchedulingEnabled = !ShaderEditorApp.preferences.isBatteryLow();
+				setTargetFrameRate(ShaderEditorApp.preferences.getWallpaperFrameRate());
+			}
+
+			@Override
+			public void onResume() {
+				super.onResume();
+				visible = true;
+				nextFrameTimeNs = 0L;
+				scheduleFrameCallback();
+			}
+
+			@Override
+			public void onPause() {
+				visible = false;
+				removeFrameCallback();
+				super.onPause();
+			}
+
+			private void setFrameSchedulingEnabled(boolean enabled) {
+				frameSchedulingEnabled = enabled;
+				nextFrameTimeNs = 0L;
+				if (enabled) {
+					scheduleFrameCallback();
+				} else {
+					removeFrameCallback();
+				}
+			}
+
+			private void setTargetFrameRate(int requestedRate) {
+				targetFrameRate = WallpaperFrameRateOptions.getClosestSupportedRate(
+						ShaderWallpaperService.this,
+						requestedRate);
+				framePeriodNs = Math.max(1L, NS_PER_SECOND / targetFrameRate);
+				nextFrameTimeNs = 0L;
+				Log.i(FRAME_RATE_TAG, "Wallpaper target frame rate=" +
+						targetFrameRate + " Hz, selectable=" +
+						WallpaperFrameRateOptions.getSelectableRates(
+								ShaderWallpaperService.this));
+				applyFrameRateToSurface();
+			}
+
+			private void onVsync(long frameTimeNanos) {
+				callbackPosted = false;
+				if (!visible || !frameSchedulingEnabled) {
+					return;
+				}
+				if (nextFrameTimeNs == 0L || frameTimeNanos >= nextFrameTimeNs) {
+					requestRender();
+					if (nextFrameTimeNs == 0L) {
+						nextFrameTimeNs = frameTimeNanos + framePeriodNs;
+					} else {
+						do {
+							nextFrameTimeNs += framePeriodNs;
+						} while (nextFrameTimeNs <= frameTimeNanos);
+					}
+				}
+				scheduleFrameCallback();
+			}
+
+			private void scheduleFrameCallback() {
+				if (!visible || !frameSchedulingEnabled || callbackPosted) {
+					return;
+				}
+				callbackPosted = true;
+				choreographer.postFrameCallback(frameCallback);
+			}
+
+			private void removeFrameCallback() {
+				if (!callbackPosted) {
+					return;
+				}
+				callbackPosted = false;
+				choreographer.removeFrameCallback(frameCallback);
+			}
+
+			private void applyFrameRateToSurface() {
+				if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+					return;
+				}
+				Surface surface = getHolder().getSurface();
+				if (surface == null || !surface.isValid()) {
+					return;
+				}
+				try {
+					surface.setFrameRate(
+							targetFrameRate,
+							Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+					Log.i(FRAME_RATE_TAG, "Applied Surface frame rate hint=" +
+							targetFrameRate + " Hz");
+				} catch (IllegalStateException e) {
+					Log.w(FRAME_RATE_TAG, "Unable to apply wallpaper frame rate", e);
+				}
 			}
 
 			@Override
@@ -184,6 +307,19 @@ public class ShaderWallpaperService extends WallpaperService {
 			}
 
 			public void destroy() {
+				visible = false;
+				removeFrameCallback();
+				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+					Surface surface = getHolder().getSurface();
+					if (surface != null && surface.isValid()) {
+						try {
+							surface.setFrameRate(
+									0f,
+									Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
+						} catch (IllegalStateException ignored) {
+						}
+					}
+				}
 				super.onDetachedFromWindow();
 			}
 		}

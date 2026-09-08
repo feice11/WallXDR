@@ -23,6 +23,8 @@ import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceGroup;
 
+import java.util.List;
+
 import de.markusfisch.android.shadereditor.R;
 import de.markusfisch.android.shadereditor.app.ShaderEditorApp;
 import de.markusfisch.android.shadereditor.database.DataRecords;
@@ -33,6 +35,7 @@ import de.markusfisch.android.shadereditor.io.DatabaseImporter;
 import de.markusfisch.android.shadereditor.io.ImportExportAsFiles;
 import de.markusfisch.android.shadereditor.preference.Preferences;
 import de.markusfisch.android.shadereditor.preference.ShaderListPreference;
+import de.markusfisch.android.shadereditor.preference.WallpaperFrameRateOptions;
 import de.markusfisch.android.shadereditor.receiver.BatteryLevelReceiver;
 
 public class PreferencesFragment
@@ -90,7 +93,29 @@ public class PreferencesFragment
 	@Override
 	public void onCreatePreferences(Bundle state, String rootKey) {
 		setPreferencesFromResource(R.xml.preferences, rootKey);
+		configureWallpaperFrameRates();
 		wireImportExport();
+	}
+
+	private void configureWallpaperFrameRates() {
+		ListPreference preference = findPreference(Preferences.WALLPAPER_FRAME_RATE);
+		if (preference == null) {
+			return;
+		}
+		List<Integer> rates = WallpaperFrameRateOptions.getSelectableRates(requireContext());
+		CharSequence[] entries = new CharSequence[rates.size()];
+		CharSequence[] values = new CharSequence[rates.size()];
+		for (int i = 0; i < rates.size(); ++i) {
+			int rate = rates.get(i);
+			entries[i] = rate + " Hz";
+			values[i] = String.valueOf(rate);
+		}
+		preference.setEntries(entries);
+		preference.setEntryValues(values);
+		int closest = WallpaperFrameRateOptions.getClosestSupportedRate(
+				requireContext(),
+				ShaderEditorApp.preferences.getWallpaperFrameRate());
+		preference.setValue(String.valueOf(closest));
 	}
 
 	@Override

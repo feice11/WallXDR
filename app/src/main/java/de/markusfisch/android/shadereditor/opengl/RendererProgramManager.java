@@ -66,6 +66,12 @@ final class RendererProgramManager {
 				return mix(high, low, cutoff);
 			}
 
+			float sdrDither(vec2 pixel) {
+				return fract(52.9829189 * fract(dot(
+						pixel,
+						vec2(0.06711056, 0.00583715)))) - 0.5;
+			}
+
 			vec3 rec709ToBt2020(vec3 c) {
 				return vec3(
 					0.6274040 * c.r + 0.3292820 * c.g + 0.0433136 * c.b,
@@ -95,6 +101,10 @@ final class RendererProgramManager {
 					color.rgb = linearToPq(rec709ToBt2020(linear709));
 				} else if (hdrNativeInput != 0) {
 					color.rgb = linearToSrgb(clamp(color.rgb, 0.0, 1.0));
+					color.rgb = clamp(
+							color.rgb + vec3(sdrDither(gl_FragCoord.xy) / 255.0),
+							0.0,
+							1.0);
 				}
 				gl_FragColor = color;
 			}

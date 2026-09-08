@@ -215,7 +215,8 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 		}
 
 		if (!renderPipeline.hasTargets()) {
-			boolean preferFp16Targets = hdrSurfaceActive && glesVersion >= 3;
+			boolean preferFp16Targets = glesVersion >= 3 &&
+					(hdrSurfaceActive || programManager.isHdrNativeShader());
 			var targetErrors = renderPipeline.ensureTargets(
 					context,
 					surfaceState.renderWidth(),
