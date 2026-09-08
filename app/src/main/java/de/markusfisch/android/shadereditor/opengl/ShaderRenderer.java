@@ -7,6 +7,7 @@ import android.hardware.display.DisplayManager;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.os.Build;
+import android.util.Log;
 import android.view.Display;
 import android.view.MotionEvent;
 import android.view.WindowManager;
@@ -21,6 +22,8 @@ import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 public class ShaderRenderer implements GLSurfaceView.Renderer {
+	private static final String HDR_TAG = "ShaderEditor.HDR";
+
 	public interface OnRendererListener {
 		void onInfoLog(@NonNull List<ShaderError> error);
 
@@ -39,6 +42,9 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 	public static final String UNIFORM_FTIME = "ftime";
 	public static final String UNIFORM_GRAVITY = "gravity";
 	public static final String UNIFORM_GYROSCOPE = "gyroscope";
+	public static final String UNIFORM_HDR_ENABLED = "hdrEnabled";
+	public static final String UNIFORM_HDR_HEADROOM = "hdrHeadroom";
+	public static final String UNIFORM_HDR_REFERENCE_WHITE_NITS = "hdrReferenceWhiteNits";
 	public static final String UNIFORM_LAST_NOTIFICATION_TIME = "lastNotificationTime";
 	public static final String UNIFORM_LIGHT = "light";
 	public static final String UNIFORM_LINEAR = "linear";
@@ -67,6 +73,7 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 	public static final String UNIFORM_MIC_AMPLITUDE = "micAmplitude";
 	public static final String UNIFORM_TOUCH = "touch";
 	public static final String UNIFORM_TOUCH_START = "touchStart";
+	public static final String UNIFORM_DISPLAY_PEAK_NITS = "displayPeakNits";
 
 	private static final int MAX_TEXTURES = 32;
 	private static final long FPS_UPDATE_FREQUENCY_NS = 200000000L;
@@ -95,6 +102,9 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 	private volatile float samples;
 	private volatile int lastFps;
 	private volatile float refreshRate = DEFAULT_REFRESH_RATE;
+	private volatile int glesVersion = 2;
+	private volatile boolean hdrSurfaceActive;
+	private volatile float displayPeakNits;
 
 	public ShaderRenderer(Context context) {
 		this.context = context;
@@ -102,7 +112,24 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 	}
 
 	public void setVersion(int version) {
+		glesVersion = version;
 		programManager.setVersion(version);
+	}
+
+	public int getGlesVersion() {
+		return glesVersion;
+	}
+
+	public void setHdrSurfaceActive(boolean active) {
+		hdrSurfaceActive = active;
+	}
+
+	public boolean isHdrSurfaceActive() {
+		return hdrSurfaceActive;
+	}
+
+	public void setDisplayPeakNits(float displayPeakNits) {
+		this.displayPeakNits = displayPeakNits;
 	}
 
 	public void setFragmentShader(String source, float quality) {
@@ -121,6 +148,16 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 
 	@Override
 	public void onSurfaceCreated(GL10 gl, EGLConfig config) {
+		String extensions = GLES20.glGetString(GLES20.GL_EXTENSIONS);
+		Log.i(HDR_TAG, "GL context: GLES=" + glesVersion +
+				", vendor=" + GLES20.glGetString(GLES20.GL_VENDOR) +
+				", renderer=" + GLES20.glGetString(GLES20.GL_RENDERER) +
+				", version=" + GLES20.glGetString(GLES20.GL_VERSION) +
+				", hdrSurface=" + hdrSurfaceActive +
+				", EXT_color_buffer_half_float=" + containsExtension(
+						extensions, "GL_EXT_color_buffer_half_float") +
+				", EXT_color_buffer_float=" + containsExtension(
+						extensions, "GL_EXT_color_buffer_float"));
 		device.resetState();
 		device.disable(GLES20.GL_CULL_FACE);
 		device.disable(GLES20.GL_BLEND);
@@ -178,11 +215,13 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 		}
 
 		if (!renderPipeline.hasTargets()) {
+			boolean preferFp16Targets = hdrSurfaceActive && glesVersion >= 3;
 			var targetErrors = renderPipeline.ensureTargets(
 					context,
 					surfaceState.renderWidth(),
 					surfaceState.renderHeight(),
-					programManager.getBackBufferParameters());
+					programManager.getBackBufferParameters(),
+					preferFp16Targets);
 			if (!targetErrors.isEmpty()) {
 				submitErrors(targetErrors);
 			}
@@ -190,7 +229,20 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 				cancelCaptureThumbnail();
 				return;
 			}
+			if (programManager.isHdrNativeShader()) {
+				Log.i(HDR_TAG, "HDR-native shader input active: hdrSurface=" +
+						hdrSurfaceActive + ", fp16Targets=" +
+						renderPipeline.isFp16TargetActive());
+				if (hdrSurfaceActive && !renderPipeline.isFp16TargetActive()) {
+					Log.w(HDR_TAG, "HDR-native shader is using RGBA8 fallback; " +
+							"values above 1.0 will not retain HDR highlight headroom");
+				}
+			}
 		}
+
+		boolean hdrShaderEnabled = programManager.isHdrNativeShader() &&
+				hdrSurfaceActive && renderPipeline.isFp16TargetActive();
+		builtinUniforms.setHdrState(hdrShaderEnabled, displayPeakNits);
 
 		var frame = builtinUniforms.beginFrame(renderPipeline.getBackTexture());
 		if (frame == null) {
@@ -205,7 +257,9 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 				surfaceBindings,
 				surfaceProgram,
 				frame.surfaceWidth(),
-				frame.surfaceHeight());
+				frame.surfaceHeight(),
+				hdrSurfaceActive,
+				programManager.isHdrNativeShader());
 		renderPipeline.swapTargets();
 		captureThumbnail();
 
@@ -270,7 +324,8 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 					surfaceProgram != null) {
 				thumbnail = renderPipeline.captureThumbnail(
 						surfaceBindings,
-						surfaceProgram);
+						surfaceProgram,
+						programManager.isHdrNativeShader());
 				captureThumbnail = false;
 				thumbnailLock.notifyAll();
 			}
@@ -308,6 +363,10 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 		}
 
 		lastRender = now;
+	}
+
+	private static boolean containsExtension(@Nullable String extensions, String extension) {
+		return extensions != null && extensions.contains(extension);
 	}
 
 	private static float getRefreshRate(Context context) {

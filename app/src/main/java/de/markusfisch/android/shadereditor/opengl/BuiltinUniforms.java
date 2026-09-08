@@ -24,6 +24,8 @@ final class BuiltinUniforms {
 
 	private static final float NS_PER_SECOND = 1000000000f;
 	private static final float DEFAULT_FTIME_MAX = 3f;
+	private static final float HDR_REFERENCE_WHITE_NITS = 203f;
+	private static final float PQ_MAX_NITS = 10000f;
 	private static final int MAX_POINTERS = 10;
 
 	private final float[] surfaceResolution = new float[]{0, 0};
@@ -53,6 +55,9 @@ final class BuiltinUniforms {
 	private float fTimeMax = DEFAULT_FTIME_MAX;
 	private float quality = 1f;
 	private float startRandom;
+	private boolean hdrEnabled;
+	private float hdrHeadroom = 1f;
+	private float displayPeakNits;
 
 	BuiltinUniforms(@NonNull Context context) {
 		this.context = context;
@@ -63,6 +68,17 @@ final class BuiltinUniforms {
 
 	void setQuality(float quality) {
 		this.quality = quality;
+	}
+
+	void setHdrState(boolean enabled, float reportedDisplayPeakNits) {
+		displayPeakNits = Float.isFinite(reportedDisplayPeakNits) &&
+				reportedDisplayPeakNits > 0f
+				? Math.min(reportedDisplayPeakNits, PQ_MAX_NITS)
+				: 0f;
+		hdrEnabled = enabled;
+		hdrHeadroom = enabled && displayPeakNits > 0f
+				? Math.max(1f, displayPeakNits / HDR_REFERENCE_WHITE_NITS)
+				: 1f;
 	}
 
 	void configure(
@@ -210,6 +226,12 @@ final class BuiltinUniforms {
 		}
 		bindings.setFloat2(ShaderRenderer.UNIFORM_OFFSET, offset);
 		bindings.setFloat(ShaderRenderer.UNIFORM_START_RANDOM, startRandom);
+		bindings.setInt(ShaderRenderer.UNIFORM_HDR_ENABLED, hdrEnabled ? 1 : 0);
+		bindings.setFloat(ShaderRenderer.UNIFORM_HDR_HEADROOM, hdrHeadroom);
+		bindings.setFloat(
+				ShaderRenderer.UNIFORM_HDR_REFERENCE_WHITE_NITS,
+				HDR_REFERENCE_WHITE_NITS);
+		bindings.setFloat(ShaderRenderer.UNIFORM_DISPLAY_PEAK_NITS, displayPeakNits);
 	}
 
 	private void releaseModules() {

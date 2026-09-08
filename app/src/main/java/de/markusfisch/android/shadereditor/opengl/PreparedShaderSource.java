@@ -15,18 +15,21 @@ final class PreparedShaderSource {
 	private final BackBufferParameters backBufferParameters;
 	@NonNull
 	private final List<DiscoveredSampler> samplers;
+	private final boolean hdrNative;
 
 	PreparedShaderSource(
 			@Nullable PreparedShaderInput fragmentShader,
 			float fTimeMax,
 			@Nullable String gles3VersionDirective,
 			@NonNull BackBufferParameters backBufferParameters,
-			@NonNull List<DiscoveredSampler> samplers) {
+			@NonNull List<DiscoveredSampler> samplers,
+			boolean hdrNative) {
 		this.fragmentShader = fragmentShader;
 		this.fTimeMax = fTimeMax;
 		this.gles3VersionDirective = gles3VersionDirective;
 		this.backBufferParameters = backBufferParameters;
 		this.samplers = List.copyOf(samplers);
+		this.hdrNative = hdrNative;
 	}
 
 	@NonNull
@@ -36,7 +39,8 @@ final class PreparedShaderSource {
 				3f,
 				null,
 				new BackBufferParameters(),
-				List.of());
+				List.of(),
+				false);
 	}
 
 	@Nullable
@@ -56,6 +60,10 @@ final class PreparedShaderSource {
 	@NonNull
 	List<DiscoveredSampler> getSamplers() {
 		return samplers;
+	}
+
+	boolean isHdrNative() {
+		return hdrNative;
 	}
 
 	@NonNull

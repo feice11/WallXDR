@@ -98,6 +98,10 @@ public class PresetUniformAdapter extends BaseAdapter implements Filterable {
 						ShaderRenderer.UNIFORM_DAYTIME,
 						context.getString(R.string.daytime)),
 				new Uniform(
+						"float",
+						ShaderRenderer.UNIFORM_DISPLAY_PEAK_NITS,
+						context.getString(R.string.display_peak_nits)),
+				new Uniform(
 						"int",
 						ShaderRenderer.UNIFORM_FRAME_NUMBER,
 						context.getString(R.string.frame_number)),
@@ -113,6 +117,18 @@ public class PresetUniformAdapter extends BaseAdapter implements Filterable {
 						"vec3",
 						ShaderRenderer.UNIFORM_GYROSCOPE,
 						context.getString(R.string.gyroscope)),
+				new Uniform(
+						"int",
+						ShaderRenderer.UNIFORM_HDR_ENABLED,
+						context.getString(R.string.hdr_enabled)),
+				new Uniform(
+						"float",
+						ShaderRenderer.UNIFORM_HDR_HEADROOM,
+						context.getString(R.string.hdr_headroom)),
+				new Uniform(
+						"float",
+						ShaderRenderer.UNIFORM_HDR_REFERENCE_WHITE_NITS,
+						context.getString(R.string.hdr_reference_white_nits)),
 				new Uniform(
 						"float",
 						ShaderRenderer.UNIFORM_LAST_NOTIFICATION_TIME,

@@ -156,16 +156,23 @@ final class GlDevice {
 	}
 
 	void allocateTexture2D(@NonNull GlTexture2D texture, int width, int height) {
+		allocateTexture2D(texture, width, height, RenderTargetFormat.RGBA8);
+	}
+
+	void allocateTexture2D(@NonNull GlTexture2D texture,
+			int width,
+			int height,
+			@NonNull RenderTargetFormat format) {
 		bindTexture(0, texture);
 		GLES20.glTexImage2D(
 				GLES20.GL_TEXTURE_2D,
 				0,
-				GLES20.GL_RGBA,
+				format.internalFormat,
 				width,
 				height,
 				0,
-				GLES20.GL_RGBA,
-				GLES20.GL_UNSIGNED_BYTE,
+				format.format,
+				format.type,
 				null);
 		texture.setSize(width, height);
 	}
@@ -183,6 +190,36 @@ final class GlDevice {
 			texture.setSize(bitmap.getWidth(), bitmap.getHeight());
 		}
 		return message;
+	}
+
+	@Nullable
+	String uploadTexture2DSubImage(@NonNull GlTexture2D texture,
+			@NonNull Bitmap bitmap,
+			boolean flipY) {
+		if (texture.getWidth() != bitmap.getWidth() ||
+				texture.getHeight() != bitmap.getHeight()) {
+			return "Texture sub-image size mismatch: texture=" +
+					texture.getWidth() + "x" + texture.getHeight() +
+					", bitmap=" + bitmap.getWidth() + "x" + bitmap.getHeight();
+		}
+		bindTexture(0, texture);
+		clearGlErrors();
+		GLES20.glTexSubImage2D(
+				GLES20.GL_TEXTURE_2D,
+				0,
+				0,
+				0,
+				bitmap.getWidth(),
+				bitmap.getHeight(),
+				GLES20.GL_RGBA,
+				GLES20.GL_UNSIGNED_BYTE,
+				BitmapEditor.createRgbaBuffer(bitmap, flipY));
+		int error = getLastGlError();
+		if (error != GLES20.GL_NO_ERROR) {
+			return "glTexSubImage2D failed with GL error 0x" +
+					Integer.toHexString(error);
+		}
+		return null;
 	}
 
 	@Nullable

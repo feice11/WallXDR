@@ -126,6 +126,66 @@ ShaderEditor injects this line automatically into every shader:
 Use `#ifdef SHADER_EDITOR` when you want code that only runs inside ShaderEditor.
 Useful for portable shaders shared with other GLSL environments.
 
+## How do I opt in to experimental HDR-native shader output?
+
+Add this line to the shader source:
+
+```glsl
+#define SHADEREDITOR_HDR_NATIVE 1
+```
+
+This explicitly changes the shader RGB output contract to linear-light Rec.709:
+
+- `1.0` is SDR reference white (203 nits on the current HDR output path).
+- Values above `1.0` are HDR highlights when the wallpaper negotiated an HDR surface and FP16 render targets.
+- The final wallpaper pass converts linear Rec.709 to BT.2020/PQ.
+- SDR preview and thumbnail output converts the linear values back to sRGB and clips values above SDR white.
+
+Shaders without this define keep the legacy sRGB-coded interpretation, so existing shaders are not silently reinterpreted.
+
+Example:
+
+```glsl
+#define SHADEREDITOR_HDR_NATIVE 1
+
+void main() {
+    // About 2x SDR reference white on the HDR path.
+    gl_FragColor = vec4(vec3(2.0), 1.0);
+}
+```
+
+This mode is experimental. If FP16 render targets are unavailable, ShaderEditor falls back to RGBA8 instead of failing; values above `1.0` then lose HDR highlight headroom.
+
+HDR-native shaders can also declare these built-in uniforms:
+
+```glsl
+uniform int hdrEnabled;
+uniform float hdrHeadroom;
+uniform float hdrReferenceWhiteNits;
+uniform float displayPeakNits;
+```
+
+- `hdrEnabled` is `1` only when the shader opted into HDR-native output, the current output surface is HDR, and FP16 working render targets are active. Otherwise it is `0`.
+- `hdrHeadroom` is the available linear-light multiplier above reference white. It is `displayPeakNits / hdrReferenceWhiteNits` while HDR is usable, or `1.0` otherwise.
+- `hdrReferenceWhiteNits` is currently `203.0`, so a linear shader value of `1.0` represents 203 nits.
+- `displayPeakNits` is Android's reported HDR desired maximum luminance, clamped to the PQ range. It can still be non-zero while the current surface is SDR, so check `hdrEnabled` before emitting values above `1.0`.
+
+These uniforms are also available from **Menu → Add Uniform**.
+
+Example that scales a highlight only when the full HDR path is available:
+
+```glsl
+#define SHADEREDITOR_HDR_NATIVE 1
+
+uniform int hdrEnabled;
+uniform float hdrHeadroom;
+
+void main() {
+    float highlight = hdrEnabled != 0 ? min(4.0, hdrHeadroom) : 1.0;
+    gl_FragColor = vec4(vec3(highlight), 1.0);
+}
+```
+
 ## What fonts are available?
 
 Several popular coding fonts are built in, including **JetBrains Mono**, **Fira Code**, and **Source Code Pro**.

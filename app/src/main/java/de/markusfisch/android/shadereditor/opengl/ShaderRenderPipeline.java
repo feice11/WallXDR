@@ -3,6 +3,7 @@ package de.markusfisch.android.shadereditor.opengl;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.opengl.GLES20;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -14,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class ShaderRenderPipeline {
+	private static final String HDR_TAG = "ShaderEditor.HDR";
 	private static final int THUMBNAIL_WIDTH = 144;
 	private static final int THUMBNAIL_HEIGHT = 144;
 	private static final String SURFACE_FRAME = "frame";
@@ -35,6 +37,8 @@ final class ShaderRenderPipeline {
 	private final GlTexture2D[] targetTextures = new GlTexture2D[2];
 	private int frontTarget;
 	private int backTarget = 1;
+	@NonNull
+	private RenderTargetFormat targetFormat = RenderTargetFormat.RGBA8;
 	@Nullable
 	private GlFramebuffer thumbnailFramebuffer;
 	@Nullable
@@ -81,10 +85,14 @@ final class ShaderRenderPipeline {
 		}
 		frontTarget = 0;
 		backTarget = 1;
+		targetFormat = RenderTargetFormat.RGBA8;
 	}
 
 	boolean hasTargets() {
-		return framebuffers[0] != null && targetTextures[0] != null;
+		return framebuffers[0] != null &&
+				framebuffers[1] != null &&
+				targetTextures[0] != null &&
+				targetTextures[1] != null;
 	}
 
 	@NonNull
@@ -92,17 +100,59 @@ final class ShaderRenderPipeline {
 			@NonNull Context context,
 			int width,
 			int height,
-			@NonNull BackBufferParameters parameters) {
+			@NonNull BackBufferParameters parameters,
+			boolean preferFp16) {
 		ArrayList<ShaderError> errors = new ArrayList<>();
 		if (hasTargets()) {
 			return errors;
 		}
 
 		releaseTargets();
-		createTarget(context, frontTarget, width, height, parameters, errors);
-		createTarget(context, backTarget, width, height, parameters, errors);
+		if (preferFp16) {
+			ArrayList<String> fp16Errors = new ArrayList<>();
+			if (createTargets(
+					context,
+					width,
+					height,
+					parameters,
+					RenderTargetFormat.RGBA16F,
+					fp16Errors)) {
+				targetFormat = RenderTargetFormat.RGBA16F;
+				Log.i(HDR_TAG, "Using RGBA16F HDR ping-pong render targets " +
+						width + "x" + height);
+				device.bindFramebuffer(null);
+				return errors;
+			}
+			Log.w(HDR_TAG, "RGBA16F render target setup failed; " +
+					"falling back both ping-pong targets to RGBA8: " +
+					fp16Errors);
+			releaseTargets();
+		}
+
+		ArrayList<String> rgba8Errors = new ArrayList<>();
+		if (createTargets(
+				context,
+				width,
+				height,
+				parameters,
+				RenderTargetFormat.RGBA8,
+				rgba8Errors)) {
+			targetFormat = RenderTargetFormat.RGBA8;
+			if (preferFp16) {
+				Log.i(HDR_TAG, "RGBA8 render target fallback active");
+			}
+		} else {
+			releaseTargets();
+			for (String message : rgba8Errors) {
+				errors.add(ShaderError.createGeneral(message));
+			}
+		}
 		device.bindFramebuffer(null);
 		return errors;
+	}
+
+	boolean isFp16TargetActive() {
+		return hasTargets() && targetFormat == RenderTargetFormat.RGBA16F;
 	}
 
 	void renderMainPass(
@@ -124,14 +174,18 @@ final class ShaderRenderPipeline {
 			@NonNull ProgramBindings surfaceBindings,
 			@NonNull GlProgram surfaceProgram,
 			int surfaceWidth,
-			int surfaceHeight) {
+			int surfaceHeight,
+			boolean hdrOutput,
+			boolean hdrNativeInput) {
 		drawSurface(
 				targetTextures[frontTarget],
 				surfaceWidth,
 				surfaceHeight,
 				null,
 				surfaceBindings,
-				surfaceProgram);
+				surfaceProgram,
+				hdrOutput,
+				hdrNativeInput);
 	}
 
 	@Nullable
@@ -148,7 +202,8 @@ final class ShaderRenderPipeline {
 	@Nullable
 	byte[] captureThumbnail(
 			@NonNull ProgramBindings surfaceBindings,
-			@NonNull GlProgram surfaceProgram) {
+			@NonNull GlProgram surfaceProgram,
+			boolean hdrNativeInput) {
 		if (thumbnailFramebuffer == null || targetTextures[frontTarget] == null) {
 			return null;
 		}
@@ -159,7 +214,9 @@ final class ShaderRenderPipeline {
 				(int) thumbnailResolution[1],
 				thumbnailFramebuffer,
 				surfaceBindings,
-				surfaceProgram);
+				surfaceProgram,
+				false,
+				hdrNativeInput);
 
 		final int pixels = THUMBNAIL_WIDTH * THUMBNAIL_HEIGHT;
 		final int[] rgba = new int[pixels];
@@ -206,7 +263,9 @@ final class ShaderRenderPipeline {
 			int drawHeight,
 			@Nullable GlFramebuffer targetFramebuffer,
 			@NonNull ProgramBindings surfaceBindings,
-			@NonNull GlProgram surfaceProgram) {
+			@NonNull GlProgram surfaceProgram,
+			boolean hdrOutput,
+			boolean hdrNativeInput) {
 		if (sourceTexture == null) {
 			return;
 		}
@@ -220,6 +279,8 @@ final class ShaderRenderPipeline {
 				ShaderRenderer.UNIFORM_RESOLUTION,
 				drawResolution);
 		surfaceBindings.setTexture(SURFACE_FRAME, sourceTexture);
+		surfaceBindings.setInt("hdrOutput", hdrOutput ? 1 : 0);
+		surfaceBindings.setInt("hdrNativeInput", hdrNativeInput ? 1 : 0);
 		device.applyBindings(surfaceBindings);
 		device.clear(GLES20.GL_COLOR_BUFFER_BIT);
 		device.draw(fullScreenQuadMesh, surfaceProgram);
@@ -232,27 +293,63 @@ final class ShaderRenderPipeline {
 		targetTextures[1] = null;
 		frontTarget = 0;
 		backTarget = 1;
+		targetFormat = RenderTargetFormat.RGBA8;
 	}
 
-	private void createTarget(
+	private boolean createTargets(
+			@NonNull Context context,
+			int width,
+			int height,
+			@NonNull BackBufferParameters parameters,
+			@NonNull RenderTargetFormat format,
+			@NonNull List<String> errors) {
+		boolean frontComplete = createTarget(
+				context,
+				frontTarget,
+				width,
+				height,
+				parameters,
+				format,
+				errors);
+		boolean backComplete = createTarget(
+				context,
+				backTarget,
+				width,
+				height,
+				parameters,
+				format,
+				errors);
+		return frontComplete && backComplete;
+	}
+
+	private boolean createTarget(
 			@NonNull Context context,
 			int index,
 			int width,
 			int height,
 			@NonNull BackBufferParameters parameters,
-			@NonNull List<ShaderError> errors) {
+			@NonNull RenderTargetFormat format,
+			@NonNull List<String> errors) {
 		GlTexture2D texture = device.createTexture2D();
 		targetTextures[index] = texture;
 
 		Bitmap bitmap = parameters.getPresetBitmap(context, width, height);
-		if (bitmap != null) {
-			String message = device.uploadTexture2D(texture, bitmap, true);
-			if (message != null) {
-				errors.add(ShaderError.createGeneral(message));
+		String uploadError = null;
+		if (format == RenderTargetFormat.RGBA16F) {
+			device.allocateTexture2D(texture, width, height, format);
+			if (bitmap != null) {
+				uploadError = device.uploadTexture2DSubImage(texture, bitmap, true);
 			}
-			bitmap.recycle();
+		} else if (bitmap != null) {
+			uploadError = device.uploadTexture2D(texture, bitmap, true);
 		} else {
-			device.allocateTexture2D(texture, width, height);
+			device.allocateTexture2D(texture, width, height, format);
+		}
+		if (uploadError != null) {
+			errors.add("Render target " + index + " (" + format + "): " + uploadError);
+		}
+		if (bitmap != null) {
+			bitmap.recycle();
 		}
 
 		device.applyTextureParameters(texture, parameters);
@@ -263,8 +360,8 @@ final class ShaderRenderPipeline {
 		device.attachColor(framebuffer, texture);
 		int status = device.checkFramebufferStatus(framebuffer);
 		if (status != GLES20.GL_FRAMEBUFFER_COMPLETE) {
-			errors.add(ShaderError.createGeneral(
-					"Framebuffer incomplete: 0x" + Integer.toHexString(status)));
+			errors.add("Render target " + index + " (" + format +
+					") framebuffer incomplete: 0x" + Integer.toHexString(status));
 		}
 
 		if (bitmap == null) {
@@ -272,5 +369,6 @@ final class ShaderRenderPipeline {
 			device.clear(GLES20.GL_COLOR_BUFFER_BIT |
 					GLES20.GL_DEPTH_BUFFER_BIT);
 		}
+		return uploadError == null && status == GLES20.GL_FRAMEBUFFER_COMPLETE;
 	}
 }

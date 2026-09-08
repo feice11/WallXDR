@@ -31,6 +31,9 @@ final class ShaderSourcePreparer {
 	private static final Pattern PATTERN_GLES3_VERSION = Pattern.compile(
 			"^#version 3[0-9]{2} es$",
 			Pattern.MULTILINE);
+	private static final Pattern PATTERN_HDR_NATIVE = Pattern.compile(
+			"^#define[ \\t]+SHADEREDITOR_HDR_NATIVE[ \\t]+1[ \\t]*$",
+			Pattern.MULTILINE);
 	private static final String OES_EXTERNAL =
 			"#extension GL_OES_EGL_image_external : require\n";
 	private static final String OES_EXTERNAL_ESS3 =
@@ -47,13 +50,15 @@ final class ShaderSourcePreparer {
 			int version,
 			int maxTextures) {
 		float fTimeMax = parseFTime(source);
+		boolean hdrNative = isHdrNative(source);
 		if (source == null) {
 			return new PreparedShaderSource(
 					null,
 					fTimeMax,
 					null,
 					new BackBufferParameters(),
-					List.of());
+					List.of(),
+					false);
 		}
 
 		String gles3Version = getGLES3Version(source, version);
@@ -111,7 +116,12 @@ final class ShaderSourcePreparer {
 				fTimeMax,
 				gles3Version,
 				backBufferParameters,
-				samplers);
+				samplers,
+				hdrNative);
+	}
+
+	private static boolean isHdrNative(@Nullable String source) {
+		return source != null && PATTERN_HDR_NATIVE.matcher(source).find();
 	}
 
 	private static float parseFTime(@Nullable String source) {

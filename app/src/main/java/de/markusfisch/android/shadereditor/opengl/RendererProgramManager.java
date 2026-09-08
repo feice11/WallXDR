@@ -49,8 +49,54 @@ final class RendererProgramManager {
 			
 			uniform vec2 resolution;
 			uniform sampler2D frame;
+			uniform int hdrOutput;
+			uniform int hdrNativeInput;
+
+			vec3 srgbToLinear(vec3 c) {
+				vec3 low = c / 12.92;
+				vec3 high = pow((max(c, vec3(0.0)) + 0.055) / 1.055, vec3(2.4));
+				vec3 cutoff = step(c, vec3(0.04045));
+				return mix(high, low, cutoff);
+			}
+
+			vec3 linearToSrgb(vec3 c) {
+				vec3 low = c * 12.92;
+				vec3 high = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+				vec3 cutoff = step(c, vec3(0.0031308));
+				return mix(high, low, cutoff);
+			}
+
+			vec3 rec709ToBt2020(vec3 c) {
+				return vec3(
+					0.6274040 * c.r + 0.3292820 * c.g + 0.0433136 * c.b,
+					0.0690970 * c.r + 0.9195400 * c.g + 0.0113612 * c.b,
+					0.0163916 * c.r + 0.0880132 * c.g + 0.8955950 * c.b);
+			}
+
+			vec3 linearToPq(vec3 linearBt2020) {
+				const float SDR_WHITE_NITS = 203.0;
+				const float PQ_MAX_NITS = 10000.0;
+				const float m1 = 0.1593017578125;
+				const float m2 = 78.84375;
+				const float c1 = 0.8359375;
+				const float c2 = 18.8515625;
+				const float c3 = 18.6875;
+				vec3 l = clamp(linearBt2020 * (SDR_WHITE_NITS / PQ_MAX_NITS), 0.0, 1.0);
+				vec3 p = pow(l, vec3(m1));
+				return pow((c1 + c2 * p) / (1.0 + c3 * p), vec3(m2));
+			}
+
 			void main(void) {
-				gl_FragColor = texture2D(frame,gl_FragCoord.xy / resolution.xy).rgba;
+				vec4 color = texture2D(frame, gl_FragCoord.xy / resolution.xy).rgba;
+				if (hdrOutput != 0) {
+					vec3 linear709 = hdrNativeInput != 0
+							? max(color.rgb, vec3(0.0))
+							: srgbToLinear(max(color.rgb, vec3(0.0)));
+					color.rgb = linearToPq(rec709ToBt2020(linear709));
+				} else if (hdrNativeInput != 0) {
+					color.rgb = linearToSrgb(clamp(color.rgb, 0.0, 1.0));
+				}
+				gl_FragColor = color;
 			}
 			""";
 
@@ -154,6 +200,10 @@ final class RendererProgramManager {
 
 	float getFTimeMax() {
 		return preparedShaderSource.getFTimeMax();
+	}
+
+	boolean isHdrNativeShader() {
+		return preparedShaderSource.isHdrNative();
 	}
 
 	@NonNull
